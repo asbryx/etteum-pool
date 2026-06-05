@@ -912,15 +912,17 @@ export class QoderProvider extends BaseProvider {
                     idx = nextToolIdx++;
                     toolIndex.set(key, idx);
                     pendingToolCalls.set(idx, { id: "", function: { name: "", arguments: "" } });
+                    // Generate stable ID once per tool call (not per chunk)
+                    const stableId = normalizeToolCallId(tc.id, idx);
+                    pendingToolCalls.get(idx)!.id = stableId;
                   }
-                  // Normalize tool IDs to Anthropic format
-                  const normalizedId = normalizeToolCallId(tc.id, idx);
-                  if (tc.id) pendingToolCalls.get(idx)!.id = normalizedId;
+                  // Use stable ID from pendingToolCalls (consistent across chunks)
+                  const stableId = pendingToolCalls.get(idx)!.id;
                   if (tc.function?.name) pendingToolCalls.get(idx)!.function.name = tc.function.name;
                   if (tc.function?.arguments) pendingToolCalls.get(idx)!.function.arguments += tc.function.arguments;
                   remapped.push({
                     index: idx,
-                    id: normalizedId,
+                    id: stableId,
                     ...(tc.type ? { type: tc.type } : { type: "function" }),
                     ...(tc.function ? { function: tc.function } : {}),
                   });

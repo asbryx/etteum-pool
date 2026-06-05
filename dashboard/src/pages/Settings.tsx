@@ -90,14 +90,14 @@ export default function Settings() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--foreground)]">Proxy Settings</h1>
           <p className="text-sm text-[var(--muted-foreground)] mt-1">
             Configure load balancing and auto warmup
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {dirty && (
             <span className="text-xs text-[var(--warning)] px-2 py-1 rounded bg-[var(--warning)]/10">
               Unsaved

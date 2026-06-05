@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Outlet } from "react-router-dom";
 import Sidebar from "./Sidebar";
+import { Menu } from "lucide-react";
 
 interface LayoutProps {
   onLogout?: () => void;
@@ -46,6 +47,15 @@ export default function Layout({ onLogout }: LayoutProps) {
           (collapsed ? "md:ml-[64px]" : "md:ml-[240px]")
         }
       >
+        {/* Mobile menu button */}
+        <button
+          onClick={() => setSidebarOpen(true)}
+          className="fixed top-4 left-4 z-30 md:hidden p-2 rounded-md bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] hover:bg-[var(--secondary)] transition-colors shadow-md"
+          aria-label="Open menu"
+        >
+          <Menu className="w-5 h-5" />
+        </button>
+
         <Outlet />
       </main>
     </div>

@@ -14,14 +14,28 @@ vccRouter.get("/pool", async (c) => {
 
   return c.json({
     count: cards.length,
-    cards: cards.map((card) => ({
-      id: card.id,
-      last4: card.number.slice(-4),
-      exp: `${card.expMonth}/${card.expYear.slice(-2)}`,
-      name: card.name || "John Doe",
-      status: card.status,
-      createdAt: card.createdAt,
-    })),
+    cards: cards.map((card) => {
+      // Detect brand from card number
+      const num = card.number.replace(/\D/g, "");
+      let brand = "unknown";
+      if (num.startsWith("4")) brand = "visa";
+      else if (/^5[1-5]/.test(num) || /^2[2-7]/.test(num)) brand = "mastercard";
+      else if (/^3[47]/.test(num)) brand = "amex";
+      else if (/^6(?:011|5|22126|4[4-9])/.test(num)) brand = "discover";
+      else if (/^35(?:2[89]|[3-8])/.test(num)) brand = "jcb";
+      else if (/^62/.test(num)) brand = "unionpay";
+
+      return {
+        id: card.id,
+        last4: card.number.slice(-4),
+        bin: card.number.slice(0, 6),
+        brand,
+        exp: `${card.expMonth}/${card.expYear.slice(-2)}`,
+        name: card.name || "John Doe",
+        status: card.status,
+        createdAt: card.createdAt,
+      };
+    }),
   });
 });
 

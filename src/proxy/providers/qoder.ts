@@ -435,8 +435,36 @@ Available tools: ${toolNames}`,
   }
 
   for (const m of request.messages) {
+    // Handle assistant messages with tool_calls (OpenAI format)
+    if (m.role === "assistant" && (m as any).tool_calls) {
+      const toolCalls = (m as any).tool_calls.map((tc: any) => ({
+        id: tc.id,
+        type: "function",
+        function: {
+          name: tc.function?.name || "",
+          arguments: typeof tc.function?.arguments === "string"
+            ? tc.function.arguments
+            : JSON.stringify(tc.function?.arguments || {}),
+        },
+      }));
+
+      const content = typeof m.content === "string" ? m.content : "";
+      result.push({
+        role: "assistant",
+        content,
+        contents: content ? [{ type: "text", text: content }] : [],
+        tool_calls: toolCalls,
+      });
+      continue;
+    }
+
     if (typeof m.content === "string") {
-      result.push({ role: m.role, content: m.content, contents: [{ type: "text", text: m.content }] });
+      const msg: any = { role: m.role, content: m.content, contents: [{ type: "text", text: m.content }] };
+      // Preserve tool_call_id for OpenAI tool messages
+      if (m.role === "tool" && (m as any).tool_call_id) {
+        msg.tool_call_id = (m as any).tool_call_id;
+      }
+      result.push(msg);
       continue;
     }
     if (Array.isArray(m.content)) {
@@ -574,15 +602,36 @@ function buildChatBody(request: ChatCompletionRequest, tokens: QoderTokens): any
   return body;
 }
 
-// Tool ID normalization: ensure all tool IDs match Anthropic's toolu_* format
+/**
+ * Generate OpenAI-style tool call ID.
+ * OpenAI uses format: "call_" + 24 alphanumeric characters
+ */
+function generateOpenAIToolId(): string {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let result = 'call_';
+  for (let i = 0; i < 24; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
+/**
+ * Normalize tool call ID to OpenAI format.
+ * OpenAI uses simple alphanumeric IDs like "call_abc123...", not Anthropic's "toolu_*" format.
+ * If the upstream ID is too short, generate a new one.
+ */
 function normalizeToolCallId(id: string | undefined, index: number): string {
   if (!id) {
-    // Generate toolu_* format ID if none provided
-    return `toolu_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 11)}`;
+    // Generate OpenAI-style ID if none provided
+    return generateOpenAIToolId();
   }
-  // If ID doesn't match Anthropic format, prefix it
-  if (!id.startsWith("toolu_")) {
-    return `toolu_${id}`;
+  // Strip Anthropic prefix if present (for compatibility)
+  if (id.startsWith("toolu_")) {
+    id = id.slice(6);
+  }
+  // If ID is too short (< 20 chars after stripping), generate a new one
+  if (id.length < 20) {
+    return generateOpenAIToolId();
   }
   return id;
 }
@@ -842,20 +891,34 @@ export class QoderProvider extends BaseProvider {
         const pendingToolCalls = new Map<number, { id: string; function: { name: string; arguments: string } }>();
         let lastActivity = Date.now();
         const STREAM_TIMEOUT = 300000; // 5 minutes
+        let streamActive = true;
 
-        const enqueue = (delta: any, finishReason: string | null = null) => {
-          const chunk = {
-            id,
-            object: "chat.completion.chunk",
-            created: Math.floor(Date.now() / 1000),
-            model,
-            choices: [{ index: 0, delta, finish_reason: finishReason }],
-          };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        const enqueue = (delta: any, finishReason: string | null = null, usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number }) => {
+          if (!streamActive) {
+            return; // Skip enqueue if stream is already closed
+          }
+          try {
+            const chunk: any = {
+              id,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [{ index: 0, delta, finish_reason: finishReason }],
+            };
+            // Include usage in the finish chunk per OpenAI spec
+            if (usage) {
+              chunk.usage = usage;
+            }
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+          } catch (e) {
+            // Controller closed or error - mark stream as inactive
+            streamActive = false;
+            console.log(`[Qoder] Stream enqueue failed (client likely disconnected): ${e instanceof Error ? e.message : String(e)}`);
+          }
         };
 
         try {
-          while (true) {
+          while (streamActive) {
             // Check timeout
             if (Date.now() - lastActivity > STREAM_TIMEOUT) {
               console.error(`[Qoder] Stream timeout after ${STREAM_TIMEOUT}ms`);
@@ -894,14 +957,24 @@ export class QoderProvider extends BaseProvider {
                 accumulatedUsage = parsedDelta.usage;
               }
 
+              // Build delta object, combining role with first content (OpenAI spec)
+              const delta: any = {};
+
               if (!sentRole) {
-                enqueue({ role: "assistant" });
-                sentRole = true;
+                // Include role in the first chunk that has any content
+                if (parsedDelta.reasoningContent || parsedDelta.content || parsedDelta.toolCalls) {
+                  delta.role = "assistant";
+                  sentRole = true;
+                }
               }
 
-              if (parsedDelta.reasoningContent) enqueue({ reasoning_content: parsedDelta.reasoningContent });
+              if (parsedDelta.reasoningContent) {
+                delta.reasoning_content = parsedDelta.reasoningContent;
+              }
 
-              if (parsedDelta.content) enqueue({ content: parsedDelta.content });
+              if (parsedDelta.content) {
+                delta.content = parsedDelta.content;
+              }
 
               if (parsedDelta.toolCalls) {
                 const remapped: any[] = [];
@@ -927,40 +1000,52 @@ export class QoderProvider extends BaseProvider {
                     ...(tc.function ? { function: tc.function } : {}),
                   });
                 }
-                enqueue({ tool_calls: remapped });
+                delta.tool_calls = remapped;
+              }
+
+              // Only enqueue if delta has content (not empty)
+              if (Object.keys(delta).length > 0) {
+                enqueue(delta);
               }
 
               if (parsedDelta.finishReason) {
-                // Wait a bit to ensure all tool_calls are complete
-                await new Promise(resolve => setTimeout(resolve, 50));
-                enqueue({}, parsedDelta.finishReason);
+                // Include usage in the finish chunk (OpenAI spec)
+                enqueue({}, parsedDelta.finishReason, accumulatedUsage.total_tokens > 0 ? accumulatedUsage : undefined);
                 finishEmitted = true;
               }
             }
           }
 
-          if (!finishEmitted) enqueue({}, "stop");
-
-          // Emit final usage chunk before [DONE]
-          if (accumulatedUsage.total_tokens > 0) {
-            const usageChunk = {
-              id,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [],
-              usage: accumulatedUsage,
-            };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(usageChunk)}\n\n`));
+          if (!finishEmitted && streamActive) {
+            // Include usage in the final stop chunk per OpenAI spec
+            enqueue({}, "stop", accumulatedUsage.total_tokens > 0 ? accumulatedUsage : undefined);
           }
 
-          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          if (streamActive) {
+            try {
+              controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+            } catch (e) {
+              streamActive = false;
+            }
+          }
         } catch (error) {
+          streamActive = false;
           const msg = error instanceof Error ? error.message : String(error);
-          console.error(`[Qoder] Stream error: ${msg}`);
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: msg, type: "api_error" } })}\n\n`));
+          // Don't log client disconnects as errors
+          if (msg.includes("cancelled") || msg.includes("aborted") || msg.includes("closed")) {
+            console.log(`[Qoder] Stream ${msg}`);
+          } else {
+            console.error(`[Qoder] Stream error: ${msg}`);
+          }
+          // Try to send error to client (if stream still open)
+          try {
+            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: { message: msg, type: "api_error" } })}\n\n`));
+          } catch {
+            // Controller already closed, ignore
+          }
         } finally {
-          controller.close();
+          streamActive = false;
+          try { controller.close(); } catch {}
           try { reader.releaseLock(); } catch {}
         }
       },

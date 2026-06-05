@@ -33,6 +33,12 @@ function applyTheme(theme: Theme) {
   root.classList.add("theme-transition");
   root.classList.toggle("light", theme === "light");
   window.setTimeout(() => root.classList.remove("theme-transition"), 300);
+
+  // Update theme-color meta for mobile browser chrome
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) {
+    meta.setAttribute("content", theme === "light" ? "#f3f7f4" : "#1e1e1e");
+  }
 }
 
 export function ThemeProvider({ children }: { children: ReactNode }) {

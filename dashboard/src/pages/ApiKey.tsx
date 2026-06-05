@@ -134,13 +134,13 @@ export default function ApiKey() {
             </Button>
           </div>
 
-          <div className="flex items-center justify-between gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm">
               Status: {valid === true && <span className="text-[var(--success)]">valid</span>}
               {valid === false && <span className="text-[var(--error)]">invalid</span>}
               {valid === null && <span className="text-[var(--muted-foreground)]">not tested</span>}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="outline" size="sm" onClick={loadKey}>Load Active</Button>
               <Button variant="outline" size="sm" onClick={handleTest}>Test</Button>
               <Button variant="outline" size="sm" onClick={handleRegenerate}>

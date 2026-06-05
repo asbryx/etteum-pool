@@ -369,7 +369,7 @@ export default function ImageStudio() {
   const totalImages = results.reduce((sum, r) => sum + r.urls.length, 0);
 
   return (
-    <div className="flex h-[calc(100vh-3rem)] flex-col gap-4">
+    <div className="flex h-[calc(100vh-6rem)] md:h-[calc(100vh-3rem)] flex-col gap-4">
       {/* Page Header */}
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex items-center gap-3">

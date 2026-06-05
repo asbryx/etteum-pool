@@ -91,7 +91,7 @@ export default function Requests() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-[var(--foreground)]">Requests</h1>
           <p className="text-sm text-[var(--muted-foreground)] mt-1">
@@ -103,8 +103,8 @@ export default function Requests() {
         </Button>
       </div>
 
-      <div className="flex gap-3">
-        <div className="relative max-w-sm flex-1">
+      <div className="flex flex-col gap-3 sm:flex-row">
+        <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--muted-foreground)]" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search requests..." className="pl-9" />
         </div>
@@ -124,12 +124,12 @@ export default function Requests() {
                 <tr className="border-b border-[var(--border)]">
                   <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Time</th>
                   <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Provider</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Model</th>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden md:table-cell">Model</th>
                   <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Status</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Duration</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Tokens</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Credits</th>
-                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4">Account</th>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden md:table-cell">Duration</th>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden lg:table-cell">Tokens</th>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden lg:table-cell">Credits</th>
+                  <th className="text-left text-xs font-medium text-[var(--muted-foreground)] uppercase tracking-wide p-4 hidden lg:table-cell">Account</th>
                 </tr>
               </thead>
               <tbody>
@@ -137,12 +137,12 @@ export default function Requests() {
                   <tr key={req.id} onClick={() => setSelected(req)} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--secondary)]/50 cursor-pointer">
                     <td className="p-4 text-xs text-[var(--muted-foreground)] font-mono">{formatDateTimeID(req.createdAt)}</td>
                     <td className="p-4 text-sm text-[var(--foreground)]">{labelProvider(req.provider)}</td>
-                    <td className="p-4 text-sm text-[var(--foreground)]">{req.model || "-"}</td>
+                    <td className="p-4 text-sm text-[var(--foreground)] hidden md:table-cell">{req.model || "-"}</td>
                     <td className="p-4"><Badge variant={getStatusColor(req.status)}>{req.status}</Badge></td>
-                    <td className="p-4 text-sm text-[var(--muted-foreground)]">{((req.durationMs ?? 0) / 1000).toFixed(1)}s</td>
-                    <td className="p-4 text-xs text-[var(--muted-foreground)]">{req.totalTokens || 0}</td>
-                    <td className="p-4 text-xs text-[var(--muted-foreground)]">{Number(req.creditsUsed || 0).toFixed(2)}</td>
-                    <td className="p-4 text-xs text-[var(--muted-foreground)]">{req.accountEmail || (req.accountId ? `#${req.accountId}` : "-")}</td>
+                    <td className="p-4 text-sm text-[var(--muted-foreground)] hidden md:table-cell">{((req.durationMs ?? 0) / 1000).toFixed(1)}s</td>
+                    <td className="p-4 text-xs text-[var(--muted-foreground)] hidden lg:table-cell">{req.totalTokens || 0}</td>
+                    <td className="p-4 text-xs text-[var(--muted-foreground)] hidden lg:table-cell">{Number(req.creditsUsed || 0).toFixed(2)}</td>
+                    <td className="p-4 text-xs text-[var(--muted-foreground)] hidden lg:table-cell">{req.accountEmail || (req.accountId ? `#${req.accountId}` : "-")}</td>
                   </tr>
                 ))}
                 {!loading && filtered.length === 0 && (

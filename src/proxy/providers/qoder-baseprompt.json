@@ -70,60 +70,6 @@
         }
       },
       "reasoning_content_signature": ""
-    },
-    {
-      "role": "user",
-      "content": "",
-      "contents": [
-        {
-          "type": "text",
-          "text": "<system-reminder>\nHere are some useful tips for you:\n- Today is 2026-04-15\n</system-reminder>"
-        },
-        {
-          "type": "text",
-          "text": "<available_skills>\n<skill>\n<name>create-skill</name>\n<description>Guides users through creating effective Agent Skills for Qoder. Use when the user wants to create, write, or author a new skill, or asks about skill structure, best practices, or SKILL.md format.</description>\n<location>built-in</location>\n</skill>\n<skill>\n<name>create-subagent</name>\n<description>Create a new subagent in Qoder for specialized AI tasks. Use when the user wants to create a new type of subagent, set up task-specific agents, configure code reviewers, debuggers, or domain-specific assistants with custom prompts.</description>\n<location>built-in</location>\n</skill>\n</available_skills>"
-        }
-      ],
-      "response_meta": {
-        "id": "",
-        "usage": {
-          "prompt_tokens": 0,
-          "completion_tokens": 0,
-          "total_tokens": 0,
-          "completion_tokens_details": {
-            "reasoning_tokens": 0
-          },
-          "prompt_tokens_details": {
-            "cached_tokens": 0
-          }
-        }
-      },
-      "reasoning_content_signature": ""
-    },
-    {
-      "role": "user",
-      "content": "",
-      "contents": [
-        {
-          "type": "text",
-          "text": "hi"
-        }
-      ],
-      "response_meta": {
-        "id": "",
-        "usage": {
-          "prompt_tokens": 0,
-          "completion_tokens": 0,
-          "total_tokens": 0,
-          "completion_tokens_details": {
-            "reasoning_tokens": 0
-          },
-          "prompt_tokens_details": {
-            "cached_tokens": 0
-          }
-        }
-      },
-      "reasoning_content_signature": ""
     }
   ],
   "tools": [

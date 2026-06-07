@@ -100,19 +100,6 @@ function normalizeModelId(model: string): string {
   return model.replace(/claude-sonet/gi, "claude-sonnet");
 }
 
-/**
- * Fallback model override: any model not explicitly owned by a non-fallback
- * provider gets rewritten to qd-Qwen3.7-Max. This lets the assistant / Anthropic
- * clients send requests with their native model names (claude-sonnet-*, etc.)
- * and have them transparently routed to Qwen3.7-Max via Qoder.
- */
-function resolveModelId(model: string): string {
-  const normalized = normalizeModelId(model);
-  for (const provider of providerList) {
-    if (!provider.isFallback && provider.ownsModel(normalized)) return normalized;
-  }
-  return "qd-Qwen3.7-Max";
-}
 
 function computeCredits(
   provider: keyof typeof providers,
@@ -624,7 +611,7 @@ proxyRouter.post("/v1/chat/completions", async (c) => {
     );
   }
 
-  body.model = resolveModelId(body.model);
+  body.model = normalizeModelId(body.model);
   const isStream = body.stream === true;
 
   try {
@@ -703,7 +690,7 @@ proxyRouter.post("/v1/messages", async (c) => {
     return c.json({ type: "error", error: { type: "invalid_request_error", message: "model is required" } }, 400);
   }
 
-  body.model = resolveModelId(body.model);
+  body.model = normalizeModelId(body.model);
   const openAIRequest = anthropicToOpenAI(body);
 
   try {

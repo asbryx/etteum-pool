@@ -15,6 +15,7 @@ import { sql } from "drizzle-orm";
 import { PUDIDIL_FILTERS } from "./proxy/filters";
 import { loadFilterCache } from "./proxy/filter-cache";
 import { ensureModelMappingTable, seedModelMappings, loadModelMappingCache } from "./proxy/model-mapping";
+import { refreshByokModels } from "./proxy/providers/registry";
 
 // Run database migrations on startup
 await runMigrations();
@@ -48,6 +49,13 @@ try {
   await loadModelMappingCache();
 } catch (e) {
   console.error("[DB] Model mapping init skipped:", e instanceof Error ? e.message : e);
+}
+
+// Pre-warm BYOK provider cache so ownsModel() works from the first request
+try {
+  await refreshByokModels();
+} catch (e) {
+  console.error("[BYOK] Cache warm-up skipped:", e instanceof Error ? e.message : e);
 }
 
 // Start auto-warmup scheduler (reads settings from DB)

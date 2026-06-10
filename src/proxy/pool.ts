@@ -250,6 +250,15 @@ class AccountPool {
     const provider = this.getProviderForModel(model);
     if (!provider) return null;
 
+    // BYOK requires special handling - find account by prefix
+    if (provider === "byok") {
+      const { getByokProvider } = await import("./providers/registry");
+      const byokProvider = getByokProvider();
+      const account = await byokProvider.findAccountForModel(model);
+      if (!account) return null;
+      return { account, provider: "byok" };
+    }
+
     const account = await this.getNextAccount(provider);
     if (!account) return null;
 

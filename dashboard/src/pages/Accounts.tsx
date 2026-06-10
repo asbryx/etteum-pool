@@ -17,10 +17,13 @@ import { useWsEvent } from "@/hooks/useWebSocket";
 import {
   completeCodexOAuthCallbackUrl,
   createAccount,
+  createByokProvider,
+  deleteByokProvider,
   fetchAccounts,
   fetchApi,
   fetchAuthQueue,
   fetchAutoWarmupStatus,
+  fetchByokProviders,
   fetchSettings,
   fetchWarmupQueue,
   getCodexAuthorize,
@@ -30,9 +33,12 @@ import {
   pollCodexOAuthStatus,
   startCodexOAuthProxy,
   stopCodexOAuth,
+  testByokProvider,
+  updateByokProvider,
   updateSettings,
   warmupAllAccounts,
   type AutoWarmupStatus,
+  type ByokProvider,
 } from "@/lib/api";
 
 type Provider = "kiro" | "kiro-pro" | "codebuddy" | "canva" | "codex" | "qoder";
@@ -83,6 +89,16 @@ export default function Accounts() {
   const [codexOauthCallbackUrl, setCodexOauthCallbackUrl] = useState("");
   const [loginPendingDialog, setLoginPendingDialog] = useState(false);
   const [loginPendingConcurrency, setLoginPendingConcurrency] = useState(2);
+  const [byokProviders, setByokProviders] = useState<ByokProvider[]>([]);
+  const [byokDialogOpen, setByokDialogOpen] = useState(false);
+  const [byokEditId, setByokEditId] = useState<number | null>(null);
+  const [byokForm, setByokForm] = useState({
+    label: "",
+    base_url: "",
+    api_key: "",
+    format: "auto" as "openai" | "anthropic" | "auto",
+    models: "",
+  });
   const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const codexOauthPopupRef = useRef<Window | null>(null);
   const codexOauthPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -107,6 +123,10 @@ export default function Accounts() {
       setAutoWarmup(autoWarmupRes);
       setSettingsMap(settingsRes?.data || {});
       updateWarmupQueue(warmupQueueRes);
+
+      // Load BYOK providers
+      const byokRes = await fetchByokProviders();
+      setByokProviders(byokRes.providers || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -205,6 +225,11 @@ export default function Accounts() {
   ], scheduleWarmupReload);
 
   useWsEvent(["account_status"], scheduleReload);
+
+  useWsEvent(["byok_created", "byok_updated", "byok_deleted"], async () => {
+    const byokRes = await fetchByokProviders();
+    setByokProviders(byokRes.providers || []);
+  });
 
   async function handleToggleAutoWarmup(provider: Provider) {
     const key = `auto_warmup_provider_${provider}`;
@@ -522,6 +547,117 @@ export default function Accounts() {
     await load();
   }
 
+  async function handleAddByok() {
+    if (!byokForm.label || !byokForm.base_url || !byokForm.api_key || !byokForm.models) {
+      showError(new Error("All fields are required"));
+      return;
+    }
+
+    const models = byokForm.models.split(",").map(m => m.trim()).filter(Boolean);
+    if (models.length === 0) {
+      showError(new Error("At least one model is required"));
+      return;
+    }
+
+    try {
+      await createByokProvider({
+        label: byokForm.label,
+        base_url: byokForm.base_url,
+        api_key: byokForm.api_key,
+        format: byokForm.format,
+        models,
+      });
+      showSuccess(`BYOK provider "${byokForm.label}" created successfully`);
+      setByokForm({ label: "", base_url: "", api_key: "", format: "auto", models: "" });
+      setByokEditId(null);
+      setByokDialogOpen(false);
+      await load();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function handleUpdateByok() {
+    if (byokEditId === null) return;
+    if (!byokForm.base_url || !byokForm.models) {
+      showError(new Error("Base URL and models are required"));
+      return;
+    }
+
+    const models = byokForm.models.split(",").map(m => m.trim()).filter(Boolean);
+    if (models.length === 0) {
+      showError(new Error("At least one model is required"));
+      return;
+    }
+
+    try {
+      const updateData: any = {
+        base_url: byokForm.base_url,
+        format: byokForm.format,
+        models,
+      };
+
+      // Only include api_key if user entered a new one (not the masked placeholder)
+      if (byokForm.api_key && byokForm.api_key.trim() && byokForm.api_key !== BYOK_KEY_PLACEHOLDER) {
+        updateData.api_key = byokForm.api_key;
+      }
+
+      await updateByokProvider(byokEditId, updateData);
+      showSuccess(`BYOK provider "${byokForm.label}" updated successfully`);
+      setByokForm({ label: "", base_url: "", api_key: "", format: "auto", models: "" });
+      setByokEditId(null);
+      setByokDialogOpen(false);
+      await load();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  const BYOK_KEY_PLACEHOLDER = "••••••••";
+
+  function handleEditByok(provider: ByokProvider) {
+    setByokEditId(provider.id);
+    setByokForm({
+      label: provider.label,
+      base_url: provider.base_url,
+      api_key: BYOK_KEY_PLACEHOLDER, // Show masked indicator that key exists
+      format: provider.format,
+      models: provider.models.join(", "),
+    });
+    setByokDialogOpen(true);
+  }
+
+  function handleCloseByokDialog() {
+    setByokForm({ label: "", base_url: "", api_key: "", format: "auto", models: "" });
+    setByokEditId(null);
+    setByokDialogOpen(false);
+  }
+
+  async function handleTestByok(id: number, label: string) {
+    try {
+      const result = await testByokProvider(id);
+      if (result.success) {
+        showSuccess(`✓ ${label} connection successful (format: ${result.format}, model: ${result.model})`);
+      } else {
+        showError(new Error(result.error || "Connection test failed"));
+      }
+    } catch (err) {
+      showError(err);
+    }
+  }
+
+  async function handleDeleteByok(id: number, label: string) {
+    if (!confirm(`Delete BYOK provider "${label}"? This cannot be undone.`)) return;
+
+    try {
+      await deleteByokProvider(id);
+      showSuccess(`BYOK provider "${label}" deleted`);
+      await load();
+    } catch (err) {
+      showError(err);
+    }
+  }
+
   const providerStats = useMemo(() => {
     return providers.map((provider) => {
       const rows = accounts.filter((a) => a.provider === provider);
@@ -686,6 +822,188 @@ export default function Accounts() {
           </Card>
         ))}
       </div>
+
+      {/* BYOK Providers Section */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold text-[var(--foreground)]">Custom Providers (BYOK)</h2>
+            <p className="text-sm text-[var(--muted-foreground)]">Bring Your Own Key - use your own API providers</p>
+          </div>
+          <Button onClick={() => setByokDialogOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" /> Add Provider
+          </Button>
+        </div>
+
+        {byokProviders.length === 0 ? (
+          <div className="rounded-md border border-dashed border-[var(--border)] p-8 text-center">
+            <p className="text-sm text-[var(--muted-foreground)]">No custom providers configured yet</p>
+            <p className="text-xs text-[var(--muted-foreground)] mt-1">Add your own API provider to use custom models</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {byokProviders.map((provider) => (
+              <Card key={provider.id} className="border-[var(--border)]">
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <CardTitle className="text-base">{provider.label}</CardTitle>
+                      <p className="text-xs text-[var(--muted-foreground)] mt-1">{provider.base_url}</p>
+                    </div>
+                    <Badge variant={provider.status === "active" ? "default" : "secondary"}>
+                      {provider.status}
+                    </Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[var(--muted-foreground)]">Format</span>
+                      <span className="text-[var(--foreground)] font-medium">{provider.format}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-[var(--muted-foreground)]">Models</span>
+                      <span className="text-[var(--foreground)] font-medium">{provider.models.length}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <p className="text-xs text-[var(--muted-foreground)]">Available Models</p>
+                    <div className="flex flex-wrap gap-1 max-h-20 overflow-y-auto">
+                      {provider.available_models?.slice(0, 10).map((model) => (
+                        <Badge key={model} variant="outline" className="text-xs">
+                          {model}
+                        </Badge>
+                      ))}
+                      {provider.available_models && provider.available_models.length > 10 && (
+                        <Badge variant="outline" className="text-xs">
+                          +{provider.available_models.length - 10} more
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-3 gap-2 pt-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleEditByok(provider)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTestByok(provider.id, provider.label)}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => handleDeleteByok(provider.id, provider.label)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* BYOK Add/Edit Dialog */}
+      <Dialog open={byokDialogOpen} onOpenChange={(open) => !open && handleCloseByokDialog()}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DTitle>{byokEditId ? 'Edit Custom Provider' : 'Add Custom Provider'}</DTitle>
+            <DialogDescription>
+              {byokEditId ? 'Update your AI provider configuration' : 'Configure your own AI provider with your API key'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--foreground)]">Provider Name (Label)</label>
+              <Input
+                value={byokForm.label}
+                onChange={(e) => setByokForm({ ...byokForm, label: e.target.value })}
+                placeholder="e.g., openrouter, myprovider"
+                readOnly={byokEditId !== null}
+                className={byokEditId ? 'bg-[var(--muted)]' : ''}
+              />
+              <p className="text-xs text-[var(--muted-foreground)]">
+                {byokEditId ? 'Model prefix cannot be changed after creation' : 'Used as model prefix (e.g., "openrouter-gpt-4")'}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--foreground)]">Base URL</label>
+              <Input
+                value={byokForm.base_url}
+                onChange={(e) => setByokForm({ ...byokForm, base_url: e.target.value })}
+                placeholder="https://api.provider.com/v1"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--foreground)]">
+                API Key
+                {byokEditId && (
+                  <span className="ml-2 text-xs text-emerald-500 font-normal">✓ Key saved</span>
+                )}
+              </label>
+              <Input
+                type="password"
+                value={byokForm.api_key}
+                onChange={(e) => setByokForm({ ...byokForm, api_key: e.target.value })}
+                onFocus={() => {
+                  if (byokEditId && byokForm.api_key === BYOK_KEY_PLACEHOLDER) {
+                    setByokForm({ ...byokForm, api_key: "" });
+                  }
+                }}
+                placeholder={byokEditId ? 'Enter new key to replace, or leave blank to keep' : 'sk-...'}
+              />
+              {byokEditId && (
+                <p className="text-xs text-[var(--muted-foreground)]">Leave blank to keep existing API key</p>
+              )}
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--foreground)]">API Format</label>
+              <select
+                value={byokForm.format}
+                onChange={(e) => setByokForm({ ...byokForm, format: e.target.value as any })}
+                className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--background)] px-3 text-sm text-[var(--foreground)]"
+              >
+                <option value="auto">Auto-detect</option>
+                <option value="openai">OpenAI-compatible</option>
+                <option value="anthropic">Anthropic</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-[var(--foreground)]">Models</label>
+              <textarea
+                value={byokForm.models}
+                onChange={(e) => setByokForm({ ...byokForm, models: e.target.value })}
+                placeholder="gpt-4, claude-3-opus, llama-3"
+                className="w-full h-20 rounded-md border border-[var(--border)] bg-[var(--background)] p-3 text-sm text-[var(--foreground)] placeholder:text-[var(--muted-foreground)] focus:outline-none focus:ring-1 focus:ring-[var(--ring)] resize-none"
+              />
+              <p className="text-xs text-[var(--muted-foreground)]">Comma-separated list of model IDs</p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={handleCloseByokDialog}>
+                Cancel
+              </Button>
+              <Button onClick={byokEditId ? handleUpdateByok : handleAddByok}>
+                {byokEditId ? 'Update Provider' : 'Add Provider'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Login Pending Dialog */}
       <Dialog open={loginPendingDialog} onOpenChange={setLoginPendingDialog}>

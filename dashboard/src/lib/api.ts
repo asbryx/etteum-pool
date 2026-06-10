@@ -627,3 +627,61 @@ export async function completeCodexOAuthCallbackUrl(callbackUrl: string) {
 
   return completeCodexOAuth({ code, state });
 }
+
+// BYOK (Bring Your Own Key) API functions
+export interface ByokProvider {
+  id: number;
+  label: string;
+  base_url: string;
+  format: "openai" | "anthropic" | "auto";
+  models: string[];
+  model_prefix: string;
+  headers?: Record<string, string>;
+  status: string;
+  enabled: boolean;
+  available_models?: string[];
+}
+
+export async function fetchByokProviders(): Promise<{ providers: ByokProvider[] }> {
+  return fetchApi("/api/accounts/byok");
+}
+
+export async function createByokProvider(data: {
+  label: string;
+  base_url: string;
+  api_key: string;
+  format?: "openai" | "anthropic" | "auto";
+  models: string[];
+  headers?: Record<string, string>;
+}): Promise<{ success: boolean; id: number; label: string; models: string[] }> {
+  return fetchApi("/api/accounts/byok", {
+    method: "POST",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function updateByokProvider(
+  id: number,
+  data: {
+    base_url?: string;
+    api_key?: string;
+    format?: "openai" | "anthropic" | "auto";
+    models?: string[];
+    headers?: Record<string, string>;
+  }
+): Promise<{ success: boolean; id: number; label: string; models: string[] }> {
+  return fetchApi(`/api/accounts/byok/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(data),
+  });
+}
+
+export async function deleteByokProvider(id: number): Promise<{ success: boolean; deleted: number }> {
+  return fetchApi(`/api/accounts/byok/${id}`, { method: "DELETE" });
+}
+
+export async function testByokProvider(
+  id: number
+): Promise<{ success: boolean; error?: string; warning?: string; model?: string; format?: string }> {
+  return fetchApi(`/api/accounts/byok/${id}/test`, { method: "POST" });
+}

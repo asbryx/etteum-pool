@@ -4,6 +4,7 @@ import { CodeBuddyProvider } from "./codebuddy";
 import { CanvaProvider } from "./canva";
 import { CodexProvider } from "./codex";
 import { QoderProvider } from "./qoder";
+import { ByokProvider } from "./byok";
 
 /**
  * Single source of truth for the provider set.
@@ -26,11 +27,13 @@ const codebuddy = new CodeBuddyProvider();
 const canva = new CanvaProvider();
 const codex = new CodexProvider();
 const qoder = new QoderProvider();
+const byok = new ByokProvider();
 
 // Priority order. canva/qoder/codex/kiro-pro have unique prefixes; codex is
 // listed before codebuddy so the literal "gpt-5-codex" resolves to codex while
-// codebuddy keeps its own "gpt-5*"/"gpt-5.x-codex" models. kiro is the fallback.
-const PROVIDER_ORDER = [canva, qoder, codex, kiroPro, codebuddy, kiro] as const;
+// codebuddy keeps its own "gpt-5*"/"gpt-5.x-codex" models. byok checks dynamic
+// prefixes from DB accounts. kiro is the fallback.
+const PROVIDER_ORDER = [canva, qoder, codex, kiroPro, byok, codebuddy, kiro] as const;
 
 export const providers = {
   kiro,
@@ -39,6 +42,7 @@ export const providers = {
   canva,
   codex,
   qoder,
+  byok,
 } as const;
 
 export type ProviderName = keyof typeof providers;
@@ -59,3 +63,14 @@ export function getAllModels(): ModelInfo[] {
 
 /** Iterable list of provider instances (priority order). */
 export const providerList: readonly BaseProvider[] = PROVIDER_ORDER;
+
+/** Refresh BYOK models from database. */
+export async function refreshByokModels(): Promise<void> {
+  await byok.refreshModelsCache();
+}
+
+/** Get BYOK provider instance. */
+export function getByokProvider(): ByokProvider {
+  return byok;
+}
+

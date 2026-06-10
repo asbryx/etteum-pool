@@ -53,7 +53,9 @@ try {
 
 // Pre-warm BYOK provider cache so ownsModel() works from the first request
 try {
+  console.log("[BYOK] Warming up cache...");
   await refreshByokModels();
+  console.log("[BYOK] Cache warmed up successfully");
 } catch (e) {
   console.error("[BYOK] Cache warm-up skipped:", e instanceof Error ? e.message : e);
 }

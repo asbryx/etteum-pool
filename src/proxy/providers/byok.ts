@@ -81,9 +81,10 @@ export class ByokProvider extends BaseProvider {
       .from(accounts)
       .where(eq(accounts.provider, "byok"));
 
-    this.prefixCache.clear();
-    this.prefixes = [];
-    this.supportedModels = [];
+    // Build new data in temporary variables first to avoid race condition
+    const newPrefixCache = new Map<string, CachedByokAccount>();
+    const newPrefixes: string[] = [];
+    const newSupportedModels: ModelInfo[] = [];
 
     for (const account of byokAccounts) {
       if (!account.enabled || account.status !== "active") continue;
@@ -94,11 +95,11 @@ export class ByokProvider extends BaseProvider {
       const prefix = tokens.model_prefix || account.email;
       const expiresAt = Date.now() + this.CACHE_TTL;
 
-      this.prefixCache.set(prefix, { account, config: tokens, expiresAt });
-      this.prefixes.push(prefix);
+      newPrefixCache.set(prefix, { account, config: tokens, expiresAt });
+      newPrefixes.push(prefix);
 
       for (const model of tokens.models) {
-        this.supportedModels.push({
+        newSupportedModels.push({
           id: `${prefix}-${model}`,
           object: "model",
           created: Math.floor(Date.now() / 1000),
@@ -109,6 +110,10 @@ export class ByokProvider extends BaseProvider {
       }
     }
 
+    // Atomically swap in the new data
+    this.prefixCache = newPrefixCache;
+    this.prefixes = newPrefixes;
+    this.supportedModels = newSupportedModels;
     this.cacheExpiry = Date.now() + this.CACHE_TTL;
   }
 
@@ -298,6 +303,97 @@ export class ByokProvider extends BaseProvider {
       if (!response.ok) {
         const text = await response.text().catch(() => "");
         return { success: false, error: `HTTP ${response.status}: ${text.slice(0, 200)}` };
+      }
+
+      // Check if response is SSE (some providers return SSE even when stream: false)
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("text/event-stream")) {
+        // Parse SSE response - aggregate streaming chunks into single completion
+        const text = await response.text();
+        const lines = text.split("\n").filter((line) => line.startsWith("data: "));
+        
+        let aggregatedContent = "";
+        let usage: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } = {};
+        let chunkId = "";
+        let chunkModel = "";
+        let created = 0;
+        let finishReason: string | null = null;
+        
+        for (const line of lines) {
+          const payload = line.slice(6).trim();
+          if (payload === "[DONE]" || !payload || payload.startsWith(":")) continue;
+          
+          try {
+            const chunk = JSON.parse(payload);
+            
+            // Check for error response
+            if (chunk.error) {
+              return { 
+                success: false, 
+                error: chunk.error.message || chunk.error.code || "Upstream error"
+              };
+            }
+            
+            // Extract metadata from first chunk
+            if (!chunkId && chunk.id) chunkId = chunk.id;
+            if (!chunkModel && chunk.model) chunkModel = chunk.model;
+            if (!created && chunk.created) created = chunk.created;
+            
+            // Aggregate content from delta
+            const delta = chunk.choices?.[0]?.delta;
+            if (delta?.content) {
+              aggregatedContent += delta.content;
+            }
+            
+            // Capture finish reason
+            if (chunk.choices?.[0]?.finish_reason) {
+              finishReason = chunk.choices[0].finish_reason;
+            }
+            
+            // Capture usage from final chunk
+            if (chunk.usage) {
+              usage = chunk.usage;
+            }
+          } catch {
+            // Skip malformed chunks
+          }
+        }
+        
+        if (!aggregatedContent && !usage) {
+          return { success: false, error: "No valid data in SSE response" };
+        }
+        
+        // Build non-streaming response object
+        const completionResponse: ChatCompletionResponse = {
+          id: chunkId || this.generateId(),
+          object: "chat.completion",
+          created: created || Math.floor(Date.now() / 1000),
+          model: request.model, // Return original prefixed model to client
+          choices: [{
+            index: 0,
+            message: {
+              role: "assistant",
+              content: aggregatedContent,
+            },
+            finish_reason: finishReason || "stop",
+          }],
+          usage: {
+            prompt_tokens: usage.prompt_tokens || 0,
+            completion_tokens: usage.completion_tokens || this.estimateTokens(aggregatedContent),
+            total_tokens: usage.total_tokens || 0,
+          },
+        };
+        
+        const promptTokens = completionResponse.usage.prompt_tokens;
+        const completionTokens = completionResponse.usage.completion_tokens;
+        
+        return {
+          success: true,
+          response: completionResponse,
+          promptTokens,
+          completionTokens,
+          tokensUsed: promptTokens + completionTokens,
+        };
       }
 
       const data = (await response.json()) as ChatCompletionResponse;

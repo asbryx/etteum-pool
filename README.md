@@ -6,6 +6,8 @@
 [![Bun](https://img.shields.io/badge/Bun-1.x-000000?logo=bun)](https://bun.sh)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://python.org)
 
+> **Fork note:** This fork includes Windows compatibility fixes not yet in the upstream repo. See [Windows Fixes](#windows-fixes) for details.
+
 ---
 
 ## Features
@@ -73,7 +75,7 @@ If you prefer manual installation:
 
 ```bash
 # Clone the repository
-git clone https://github.com/priyo000/etteum-pool.git
+git clone https://github.com/asbryx/etteum-pool.git
 cd etteum-pool
 
 # Install Bun (if not installed)
@@ -119,8 +121,6 @@ etteum restart        # Restart server
 etteum status         # Check server status
 etteum logs           # View server logs
 etteum build          # Rebuild dashboard and restart
-etteum dev            # Run in development mode (with hot reload)
-etteum migrate        # Run database migrations
 ```
 
 ### Adding Accounts
@@ -130,8 +130,6 @@ etteum migrate        # Run database migrations
 3. Click **Add Account** for your provider
 4. Choose your method:
    - **Bulk Import** — Paste `email|password` lines (recommended)
-   - **Instant Login** — Use refresh tokens (Kiro Pro, Codex)
-   - **PAT Token** — Personal Access Token (Qoder)
    - **Single Account** — Manual email/password entry
 
 ### Configuring Auto-Warmup
@@ -142,7 +140,7 @@ etteum migrate        # Run database migrations
 
 ### Using the Proxy Pool (Optional)
 
-For providers with geo-restrictions (Canva):
+For providers with geo-restrictions:
 
 1. Go to **Proxy Pool** page
 2. Add proxies in format: `protocol://user:pass@host:port`
@@ -171,9 +169,6 @@ BROWSER_ENGINE=camoufox      # or chromium
 
 # Proxy (optional)
 PROXY_URL=                   # Global proxy for outbound requests
-
-# Kiro Pro (optional)
-KIRO_PRO_UPGRADE=true        # Enable Kiro Pro features
 ```
 
 ### Environment Variables
@@ -187,7 +182,48 @@ KIRO_PRO_UPGRADE=true        # Enable Kiro Pro features
 | `DATABASE_PATH` | `./data/poolprox3.db` | SQLite database location |
 | `BROWSER_ENGINE` | `camoufox` | Browser for login automation |
 | `PROXY_URL` | empty | Global proxy for all outbound requests |
-| `KIRO_PRO_UPGRADE` | `true` | Enable Kiro Pro features |
+
+---
+
+## Windows Fixes
+
+This fork includes several fixes for Windows compatibility that are not yet in the upstream repository:
+
+### 1. `authScriptPath` Double-Path Bug
+
+**Problem:** When `AUTH_SCRIPT_PATH` in `.env` was set to a relative path like `./scripts/auth/login.py`, and `AUTH_SCRIPT_CWD` was `./scripts/auth`, the login script path would resolve to `scripts/auth/scripts/auth/login.py` (doubled), causing `ENOENT` errors.
+
+**Fix:** `src/config.ts` now uses `path.resolve(projectRoot, ...)` to always produce an absolute path.
+
+### 2. `etteum.ps1` Project Directory Detection
+
+**Problem:** When running `etteum` from `~/.local/bin` (where the CLI wrapper is installed), the script couldn't find the actual project directory because it used the script's own location as the project root.
+
+**Fix:** The script now checks if `package.json` exists in the script directory, and falls back to `~/etteum-pool` (default install location).
+
+### 3. `Start-Process` stderr Redirect
+
+**Problem:** PowerShell 5.1 doesn't allow `RedirectStandardOutput` and `RedirectStandardError` to point to the same file.
+
+**Fix:** stderr is now redirected to a separate `.etteum.err.log` file.
+
+### 4. Bun PATH Resolution in Hidden Window
+
+**Problem:** When `Start-Process -WindowStyle Hidden` spawns bun, child processes (like `bun run build`) couldn't find `bun` in PATH.
+
+**Fix:** A `start.cmd` wrapper script sets the PATH to include `~/.bun/bin` before running the production script.
+
+### 5. `production.ts` Windows Compatibility
+
+**Problem:** `Bun.spawn(["bun", ...])` fails on Windows when bun isn't in PATH. Also, `new URL("..", import.meta.url).pathname` produces incorrect paths on Windows.
+
+**Fix:** Uses `process.execPath` for the bun binary and `fileURLToPath` + `resolve` for path construction. Also adds `taskkill` fallback for process cleanup.
+
+### 6. `normalizeToolChoice` for CodeBuddy
+
+**Problem:** CodeBuddy's API expects `tool_choice` as a string (`"auto"`, `"none"`, `"required"`), but OpenAI/Anthropic formats send objects.
+
+**Fix:** Added `normalizeToolChoice()` method that converts object formats to the expected string value.
 
 ---
 
@@ -272,8 +308,11 @@ etteum-pool/
 │   └── public/           # Static assets
 ├── scripts/
 │   ├── auth/             # Python browser automation
-│   └── production.ts     # Production server
-└── etteum                # CLI script
+│   ├── production.ts     # Production server
+│   └── bootstrap-db.ts   # DB bootstrap for fresh installs
+├── etteum.ps1            # Windows CLI script
+├── etteum.cmd            # Windows CMD wrapper
+└── start.cmd             # Windows bun PATH wrapper
 ```
 
 ### Running in Development Mode
@@ -293,7 +332,7 @@ bun run dev
 cd dashboard
 bun run build
 cd ..
-./etteum start
+etteum start
 ```
 
 ---
@@ -312,10 +351,11 @@ python -m camoufox fetch
 ### Database Migration Failed
 
 ```bash
-# Delete database and start fresh
-rm -rf data/poolprox3.db
+# Bootstrap database from scratch
+bun scripts/bootstrap-db.ts
 
-# Run migrations again
+# Or delete database and start fresh
+rm -rf data/poolprox3.db
 bun src/db/migrate.ts
 ```
 
@@ -323,7 +363,7 @@ bun src/db/migrate.ts
 
 ```bash
 # Check what's using the port
-lsof -i :1930  # macOS/Linux
+lsof -i :1930              # macOS/Linux
 netstat -ano | findstr :1930  # Windows
 
 # Change ports in .env
@@ -337,21 +377,21 @@ echo "DASHBOARD_PORT=1941" >> .env
 - Click **Warmup** button manually
 - Check provider's quota limits
 
+### Windows: `etteum` Command Not Found
+
+Make sure `~/.local/bin` is in your PATH:
+
+```powershell
+# Temporary (current session)
+$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
+
+# Permanent (add to system PATH)
+[Environment]::SetEnvironmentVariable("Path", "$env:USERPROFILE\.local\bin;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+```
+
 ---
 
 ## Updating
-
-Re-run the installer to pull latest changes:
-
-```bash
-# Linux/macOS
-curl -fsSL https://raw.githubusercontent.com/priyo000/etteum-pool/main/install.sh | bash
-
-# Windows
-irm https://raw.githubusercontent.com/priyo000/etteum-pool/main/install.ps1 | iex
-```
-
-Or manually:
 
 ```bash
 cd ~/etteum-pool
@@ -369,10 +409,9 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
 
-## Support
+## Credits
 
-- **Issues**: [GitHub Issues](https://github.com/priyo000/etteum-pool/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/priyo000/etteum-pool/discussions)
+Original project by [priyo000](https://github.com/priyo000/etteum-pool).
 
 ---
 

@@ -14,10 +14,18 @@
  *   bun run scripts/production.ts --skip-build
  */
 
-const root = new URL("..", import.meta.url).pathname;
-const dashboardDir = `${root}/dashboard`;
+import { fileURLToPath } from "url";
+import { resolve, dirname } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const root = resolve(__dirname, "..") + "/";
+const dashboardDir = `${root}dashboard`;
 const dashboardDist = `${dashboardDir}/dist/index.html`;
 const skipBuild = process.argv.includes("--skip-build");
+
+// On Windows, Bun.spawn needs "bun.exe" or the full path
+const bunBin = process.platform === "win32" ? (process.execPath || "bun.exe") : "bun";
 
 const port = process.env.PORT || "1930";
 const dashboardPort = process.env.DASHBOARD_PORT || "1931";
@@ -32,7 +40,7 @@ async function buildDashboard() {
 
   if (!skipBuild || !distExists) {
     console.log("[production] Building dashboard...");
-    const proc = Bun.spawn(["bun", "run", "build"], {
+    const proc = Bun.spawn([bunBin, "run", "build"], {
       cwd: dashboardDir,
       stdout: "inherit",
       stderr: "inherit",
@@ -60,7 +68,7 @@ console.log(`║  Dashboard: http://localhost:${dashboardPort}    ║`);
 console.log(`╚══════════════════════════════════════╝\n`);
 
 // Start backend
-const backend = Bun.spawn(["bun", "src/index.ts"], {
+const backend = Bun.spawn([bunBin, "src/index.ts"], {
   cwd: root,
   stdout: "inherit",
   stderr: "inherit",
@@ -72,7 +80,7 @@ const backend = Bun.spawn(["bun", "src/index.ts"], {
 });
 
 // Start dashboard static server
-const dashboard = Bun.spawn(["bun", "run", "scripts/serve-dashboard.ts"], {
+const dashboard = Bun.spawn([bunBin, "run", "scripts/serve-dashboard.ts"], {
   cwd: root,
   stdout: "inherit",
   stderr: "inherit",
@@ -85,16 +93,41 @@ const dashboard = Bun.spawn(["bun", "run", "scripts/serve-dashboard.ts"], {
 
 let shuttingDown = false;
 
+function forceKill(child: ReturnType<typeof Bun.spawn>) {
+  const pid = child.pid;
+  try { child.kill(); } catch {}
+  // On Windows, Bun's child.kill() is unreliable — use taskkill as fallback
+  if (process.platform === "win32" && pid > 0) {
+    try {
+      Bun.spawn(["taskkill", "/T", "/F", "/PID", String(pid)], { stdout: "ignore", stderr: "ignore" });
+    } catch {}
+  }
+}
+
 function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  backend.kill();
-  dashboard.kill();
+  console.error(`[production] Shutting down (code ${code})...`);
+  forceKill(backend);
+  forceKill(dashboard);
+  // Force exit after 2s no matter what — prevents zombie parent on Windows
+  setTimeout(() => process.exit(code), 2000).unref();
+  // Also try a quick exit in case kills succeeded
   setTimeout(() => process.exit(code), 300).unref();
 }
 
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
+
+// Prevent silent crash on unhandled errors — log and exit cleanly
+process.on("unhandledRejection", (err) => {
+  console.error("[production] Unhandled rejection:", err);
+  shutdown(1);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[production] Uncaught exception:", err);
+  shutdown(1);
+});
 
 // If either process dies, shut down both
 backend.exited.then((code) => {

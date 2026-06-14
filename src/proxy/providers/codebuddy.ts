@@ -201,6 +201,27 @@ export class CodeBuddyProvider extends BaseProvider {
   }
 
   /**
+   * Normalize tool_choice to a string value that CodeBuddy's API accepts.
+   * CodeBuddy expects tool_choice as a string: "auto", "none", or "required".
+   */
+  private normalizeToolChoice(toolChoice: any): string {
+    if (toolChoice == null) return "auto";
+    if (typeof toolChoice === "string") return toolChoice;
+    // OpenAI object format: { type: "function", function: { name: "..." } }
+    if (toolChoice.type === "function" && toolChoice.function?.name) {
+      return "required";
+    }
+    // Anthropic object format: { type: "tool", name: "..." }
+    if (toolChoice.type === "tool" && toolChoice.name) {
+      return "required";
+    }
+    // { type: "auto" } or { type: "any" }
+    if (toolChoice.type === "auto") return "auto";
+    if (toolChoice.type === "any") return "required";
+    return "auto";
+  }
+
+  /**
    * Resolve all $ref references in a JSON Schema by inlining definitions.
    * This is necessary because CodeBuddy's API doesn't support $ref/$defs.
    */
@@ -817,7 +838,7 @@ export class CodeBuddyProvider extends BaseProvider {
       body.tools = this.normalizeTools(request.tools);
     }
     if (request.tool_choice) {
-      body.tool_choice = request.tool_choice;
+      body.tool_choice = this.normalizeToolChoice(request.tool_choice);
     }
 
     if (isThinking) {

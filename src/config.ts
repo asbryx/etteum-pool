@@ -7,9 +7,11 @@ export const config = {
   dashboardPort: Number(process.env.DASHBOARD_PORT) || 1931,
   apiKey: process.env.API_KEY || "pool-proxy-secret-key",
   databasePath: process.env.DATABASE_PATH || path.join(projectRoot, "data/poolprox3.db"),
-  authScriptPath:
+  authScriptPath: path.resolve(
+    projectRoot,
     process.env.AUTH_SCRIPT_PATH ||
-    path.join(projectRoot, "scripts/auth/login.py"),
+    "scripts/auth/login.py",
+  ),
   pythonPath:
     process.env.PYTHON_PATH ||
     path.join(

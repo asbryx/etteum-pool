@@ -9,11 +9,18 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-# Auto-detect project dir: env override > script dir
+# Auto-detect project dir: env override > script dir > default install location
 if ($env:POOLPROX_HOME -and (Test-Path $env:POOLPROX_HOME)) {
   $ProjectDir = $env:POOLPROX_HOME
 } else {
-  $ProjectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+  $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+  if (Test-Path (Join-Path $ScriptDir "package.json")) {
+    $ProjectDir = $ScriptDir
+  } elseif (Test-Path (Join-Path (Join-Path $HOME "etteum-pool") "package.json")) {
+    $ProjectDir = Join-Path $HOME "etteum-pool"
+  } else {
+    $ProjectDir = $ScriptDir
+  }
 }
 
 $PidFile = Join-Path $ProjectDir ".etteum.pid"
@@ -61,8 +68,10 @@ function Invoke-Start {
   }
 
   Write-Host "Starting Etteum..."
-  $proc = Start-Process -FilePath "bun" -ArgumentList "scripts/production.ts","--skip-build" `
-    -WorkingDirectory $ProjectDir -RedirectStandardOutput $LogFile -RedirectStandardError $LogFile `
+  $ErrFile = Join-Path $ProjectDir ".etteum.err.log"
+  $StartCmd = Join-Path $ProjectDir "start.cmd"
+  $proc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", $StartCmd `
+    -WorkingDirectory $ProjectDir -RedirectStandardOutput $LogFile -RedirectStandardError $ErrFile `
     -WindowStyle Hidden -PassThru
   $proc.Id | Out-File -FilePath $PidFile -Encoding ascii
   Start-Sleep -Seconds 1

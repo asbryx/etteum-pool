@@ -200,23 +200,31 @@ const server = Bun.serve({
   websocket: websocketHandler,
 });
 
-console.log(`
-╔══════════════════════════════════════════════════╗
-║           🔄 Pool Proxy Server                   ║
-╠══════════════════════════════════════════════════╣
-║  HTTP:      http://localhost:${config.port}               ║
-║  WebSocket: ws://localhost:${config.port}/ws              ║
-║  Database:  SQLite                              ║
-║  Dashboard: http://localhost:${config.dashboardPort}              ║
-╠══════════════════════════════════════════════════╣
-║  Endpoints:                                      ║
-║    POST /v1/chat/completions  (proxy)            ║
-║    POST /v1/messages          (Anthropic)        ║
-║    GET  /v1/models            (models)           ║
-║    GET  /api/accounts         (management)       ║
-║    GET  /api/stats            (statistics)       ║
-║    WS   /ws                   (real-time)        ║
-╚══════════════════════════════════════════════════╝
-`);
+console.log(`\n╔══════════════════════════════════════════════════╗`);
+console.log(`║           🔄 Pool Proxy Server                   ║`);
+console.log(`╠══════════════════════════════════════════════════╣`);
+console.log(`║  HTTP:      http://localhost:${config.port}               ║`);
+console.log(`║  WebSocket: ws://localhost:${config.port}/ws              ║`);
+console.log(`║  Database:  SQLite                              ║`);
+console.log(`║  Dashboard: http://localhost:${config.dashboardPort}              ║`);
+console.log(`╠══════════════════════════════════════════════════╣`);
+console.log(`║  Endpoints:                                      ║`);
+console.log(`║    POST /v1/chat/completions  (proxy)            ║`);
+console.log(`║    POST /v1/messages          (Anthropic)        ║`);
+console.log(`║    GET  /v1/models            (models)           ║`);
+console.log(`║    GET  /api/accounts         (management)       ║`);
+console.log(`║    GET  /api/stats            (statistics)       ║`);
+console.log(`║    WS   /ws                   (real-time)        ║`);
+console.log(`╚══════════════════════════════════════════════════╝\n`);
+
+// Prevent silent crash — log unhandled errors before exiting
+process.on("unhandledRejection", (err) => {
+  console.error("[backend] Unhandled rejection:", err);
+  process.exit(1);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[backend] Uncaught exception:", err);
+  process.exit(1);
+});
 
 export default server;

@@ -73,6 +73,8 @@ Open your browser to **http://localhost:1931**
 
 If you prefer manual installation:
 
+#### Linux / macOS
+
 ```bash
 # Clone the repository
 git clone https://github.com/asbryx/etteum-pool.git
@@ -87,7 +89,7 @@ cd dashboard && bun install && cd ..
 
 # Set up Python environment
 python3 -m venv scripts/auth/.venv
-source scripts/auth/.venv/bin/activate  # On Windows: scripts\auth\.venv\Scripts\activate
+source scripts/auth/.venv/bin/activate
 pip install -r scripts/auth/requirements.txt
 
 # Install browsers
@@ -107,6 +109,61 @@ bun src/db/migrate.ts
 # Start the server
 etteum start
 ```
+
+#### Windows (PowerShell)
+
+```powershell
+# Clone the repository
+git clone https://github.com/asbryx/etteum-pool.git
+cd etteum-pool
+
+# Install Bun (if not installed)
+irm bun.sh/install.ps1 | iex
+# ⚠️ Restart PowerShell after install so bun is on PATH
+
+# Install dependencies
+bun install
+cd dashboard; bun install; cd ..
+
+# Set up Python environment
+python -m venv scripts\auth\.venv
+scripts\auth\.venv\Scripts\Activate.ps1
+pip install -r scripts\auth\requirements.txt
+
+# Install browsers
+python -m playwright install chromium
+python -m camoufox fetch
+
+# Configure environment
+copy .env.example .env
+# Edit .env with notepad or your preferred editor
+notepad .env
+
+# Build dashboard
+cd dashboard; bun run build; cd ..
+
+# Run migrations
+bun src/db/migrate.ts
+
+# Install CLI to PATH (so 'etteum' works from anywhere)
+$target = "$env:USERPROFILE\.local\bin"
+if (!(Test-Path $target)) { New-Item -ItemType Directory -Path $target -Force }
+copy etteum.ps1 $target\
+copy etteum.cmd $target\
+copy start.cmd $target\
+
+# Add to PATH if not already there
+$env:Path = "$target;$env:Path"
+[Environment]::SetEnvironmentVariable("Path", "$target;" + [Environment]::GetEnvironmentVariable("Path", "User"), "User")
+
+# Start the server
+etteum start
+```
+
+> **Tip:** If you don't want to install the CLI globally, you can run directly from the project folder:
+> ```powershell
+> powershell -ExecutionPolicy Bypass -File etteum.ps1 start
+> ```
 
 ---
 
@@ -158,7 +215,7 @@ PORT=1930                    # API port
 DASHBOARD_PORT=1931          # Dashboard port
 
 # Security
-API_KEY=your-secret-key      # API authentication
+API_KEY=***      # API authentication
 ENCRYPTION_KEY=...           # Auto-generated, don't change
 
 # Database

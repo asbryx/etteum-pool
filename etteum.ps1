@@ -1,4 +1,4 @@
-# etteum.ps1 - Etteum management CLI (Windows)
+﻿# etteum.ps1 - Etteum management CLI (Windows)
 # Usage: .\etteum.ps1 [start|stop|restart|status|logs|update|port|build]
 
 param(
@@ -90,9 +90,33 @@ function Invoke-Start {
 
 function Invoke-Stop {
   Write-Host "Stopping Etteum..."
+  # ORDER MATTERS:
+  #   1. Kill the supervisor FIRST so it cannot auto-restart the child.
+  #   2. Then kill production / backend / dashboard children.
+  #   3. Finally kill any wscript.exe / cmd.exe shim that launched the supervisor.
+  # "etteum stop" is final: nothing auto-starts after this. Use "etteum start" to bring it back up under the supervisor.
+
+  Get-CimInstance Win32_Process -Filter "Name='bun.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "scripts[\\/]supervisor\.ts" } |
+    ForEach-Object {
+      Write-Host "  killing supervisor PID $($_.ProcessId)"
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
   Get-CimInstance Win32_Process -Filter "Name='bun.exe' OR Name='node.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match "scripts[\\/](production|start|serve-dashboard)\.ts|src[\\/]index\.ts" } |
-    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    ForEach-Object {
+      Write-Host "  killing $($_.Name) PID $($_.ProcessId)"
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
+  Get-CimInstance Win32_Process -Filter "Name='wscript.exe' OR Name='cmd.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -match "start-supervisor\.vbs|supervisor\.ts" } |
+    ForEach-Object {
+      Write-Host "  killing launcher $($_.Name) PID $($_.ProcessId)"
+      Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+
   Remove-Item $PidFile -ErrorAction SilentlyContinue
   Write-Host "Etteum stopped"
 }

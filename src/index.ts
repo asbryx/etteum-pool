@@ -1,3 +1,6 @@
+// Patches MUST load first — disables brotli to avoid Bun crash (array_list.zig assertion)
+import "./patches";
+
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";

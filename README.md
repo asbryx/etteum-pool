@@ -172,13 +172,16 @@ etteum start
 ### CLI Commands
 
 ```bash
-etteum start          # Start server in background
-etteum stop           # Stop server
+etteum start          # Start server in background (under crash-restart supervisor on Windows)
+etteum stop           # Stop server completely (kills supervisor too — no auto-restart)
 etteum restart        # Restart server
 etteum status         # Check server status
 etteum logs           # View server logs
 etteum build          # Rebuild dashboard and restart
 ```
+
+> **Note on `start` vs `stop` (Windows):**
+> `etteum start` launches a hidden supervisor process that watches the server and **auto-restarts it on crash** (max 5 restarts in 5 min, then it gives up). `etteum stop` kills the supervisor along with the server, so nothing comes back automatically — it's a final stop. See [Reliability: Supervisor & Auto-Restart](#reliability-supervisor--auto-restart) for the full design.
 
 ### Adding Accounts
 
@@ -281,6 +284,95 @@ This fork includes several fixes for Windows compatibility that are not yet in t
 **Problem:** CodeBuddy's API expects `tool_choice` as a string (`"auto"`, `"none"`, `"required"`), but OpenAI/Anthropic formats send objects.
 
 **Fix:** Added `normalizeToolChoice()` method that converts object formats to the expected string value.
+
+### 7. Bun Brotli Crash on Windows (`array_list.zig` panic)
+
+**Problem:** Bun v1.3.x on Windows has an internal assertion failure in its brotli decompression code path (`array_list.zig:1389 → unusedCapacitySlice`). The crash fires when an HTTP response arrives with `Content-Encoding: br`. This is a Bun bug, not application code — see related upstream issues like [oven-sh/bun#32220](https://github.com/oven-sh/bun/issues/32220).
+
+**Fix:** `src/patches.ts` runs before anything else and strips `br` from `Accept-Encoding` on every outgoing request, forcing servers to respond with `gzip` or `deflate` instead. The patch covers:
+
+- `globalThis.fetch` (most app-level requests)
+- `node:http` `request` and `get`
+- `node:https` `request` and `get`
+
+Anything that escapes these (e.g. Bun's internal HTTP/2/3 paths) is caught by the supervisor's auto-restart — see the next section.
+
+---
+
+## Reliability: Supervisor & Auto-Restart
+
+This fork adds a **process supervisor** that watches the server and auto-restarts it on crash, with hard guarantees about what does and doesn't happen on Windows.
+
+### Why this exists
+
+Bun v1.3.x on Windows is known to occasionally panic with `Internal assertion failure` (see [Windows Fix #7](#7-bun-brotli-crash-on-windows-array_listzig-panic)). The brotli patch prevents the most common cause, but Bun has other Windows panics that aren't reachable from JS code (HTTP/2/3 internals, `fs.readdir` on certain paths, etc.). Rather than wait for upstream fixes, the supervisor rides out occasional crashes by restarting the process automatically.
+
+The crash frequency in practice is **about once every 2-3 hours of uptime**, so auto-restart is genuinely sufficient.
+
+### Architecture
+
+```
+etteum start
+  └─ etteum.ps1
+       └─ wscript.exe start-supervisor.vbs    ← hidden, no console window
+            └─ bun scripts/supervisor.ts       ← the supervisor
+                 └─ bun scripts/production.ts  ← spawned as child
+                      ├─ bun src/index.ts                  (backend, port 1930)
+                      └─ bun scripts/serve-dashboard.ts    (dashboard, port 1931)
+```
+
+### Hard guarantees
+
+1. **No console spam.** The supervisor uses `process.kill(pid, 0)` for liveness and raw `net.connect()` for port checks — zero `cmd.exe` / `powershell.exe` / `conhost.exe` spawns in any hot loop. The earlier watchdog this replaces was spawning `powershell -Command "(Get-Process -Id NNNN ...)"` every 10 seconds, flashing console windows constantly.
+
+2. **No Windows Startup folder entry.** The supervisor only runs when **you** run `etteum start`. After a reboot, nothing comes back automatically — you launch it yourself.
+
+3. **Crash-only restart.** A clean exit (code 0) does NOT trigger restart. The supervisor distinguishes "user stopped me" from "I crashed" via exit code: `production.ts` uses code `42` on crash, code `0` on clean shutdown.
+
+4. **Circuit breaker.** Max 5 restarts in 5 minutes, then the supervisor exits with a clear log line. Prevents fork-bombing your machine if there's a permanent bug (e.g. config error makes startup fail).
+
+5. **`etteum stop` is final.** It kills the supervisor first, then the server, then the launcher shims. Nothing auto-restarts after `etteum stop`. To bring everything back, run `etteum start` again.
+
+### Files involved
+
+| File | Role |
+|---|---|
+| `scripts/supervisor.ts` | The supervisor itself. Pure Bun. ~330 lines. |
+| `start-supervisor.vbs` | Hidden VBScript launcher (`WindowStyle=0`). Avoids the cmd-window flash. |
+| `start.cmd` | Replaced — now invokes the VBS launcher. |
+| `start-direct.cmd` | **Escape hatch.** Runs raw `bun scripts/production.ts` with no supervisor. Use this for debugging. |
+| `scripts/production.ts` | Modified to exit with code 42 on crash (distinct from manual stop). EPIPE logging is throttled to prevent the 2.3M-line log explosion the old watchdog had. |
+| `etteum.ps1` `Invoke-Stop` | Modified to also kill the supervisor and any launcher shims, not just the children. |
+| `logs/` | New directory. Holds `supervisor.log`, `etteum.stdout.log`, `etteum.stderr.log`. Logs rotate at 10 MB × 3 files. |
+
+### Supervisor flags
+
+```bash
+bun scripts/supervisor.ts                       # production: spawn + watch + restart on crash
+bun scripts/supervisor.ts --dry-run --watch-pid <PID>   # observe an existing PID for 30s without touching it
+```
+
+The `--dry-run --watch-pid` mode is useful for verifying that the supervisor's detection logic correctly tracks a running etteum without spawning anything new. It only logs observations.
+
+### Tunables (constants at top of `scripts/supervisor.ts`)
+
+```typescript
+const MAX_CRASHES = 5;                       // circuit breaker count
+const CRASH_WINDOW_MS = 5 * 60 * 1000;       // circuit breaker window
+const RESTART_DELAY_MS = 3000;               // wait before respawn after crash
+const HEALTH_CHECK_INTERVAL_MS = 10_000;     // PID + port liveness probe interval
+const STARTUP_GRACE_MS = 30_000;             // skip port-down checks for first 30s of a fresh start
+const LOG_ROTATE_BYTES = 10 * 1024 * 1024;   // 10 MB per log file
+```
+
+### Debugging
+
+If etteum keeps crashing and the supervisor's circuit breaker trips:
+
+1. Check `logs/etteum.stderr.log` for the actual crash reason.
+2. Run `start-direct.cmd` to get a visible window with raw bun output.
+3. Check `logs/supervisor.log` to see crash timestamps and exit codes.
+4. If a crash logs `Bun has crashed` with an `Internal assertion failure`, that's the upstream Bun bug — file at <https://bun.report/> using the embedded URL in the panic message.
 
 ---
 

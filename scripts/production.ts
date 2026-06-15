@@ -116,31 +116,53 @@ function shutdown(code = 0) {
   setTimeout(() => process.exit(code), 300).unref();
 }
 
+// Exit codes:
+//   0  = clean shutdown (user SIGINT/SIGTERM) — supervisor will NOT restart
+//   42 = backend or dashboard crashed unexpectedly — supervisor WILL restart
+//   1  = production.ts itself errored (rare) — supervisor treats as crash
 process.on("SIGINT", () => shutdown(0));
 process.on("SIGTERM", () => shutdown(0));
 
-// Prevent silent crash on unhandled errors — log and exit cleanly
-process.on("unhandledRejection", (err) => {
+// Throttle EPIPE noise — old watchdog logged 2.3M EPIPE lines after one crash.
+let _lastEpipeLog = 0;
+
+process.on("unhandledRejection", (err: any) => {
+  if (err?.code === "EPIPE") {
+    const now = Date.now();
+    if (now - _lastEpipeLog > 5000) {
+      _lastEpipeLog = now;
+      console.error("[production] (throttled) EPIPE in unhandled rejection");
+    }
+    return;
+  }
   console.error("[production] Unhandled rejection:", err);
   shutdown(1);
 });
-process.on("uncaughtException", (err) => {
+process.on("uncaughtException", (err: any) => {
+  if (err?.code === "EPIPE") {
+    const now = Date.now();
+    if (now - _lastEpipeLog > 5000) {
+      _lastEpipeLog = now;
+      console.error("[production] (throttled) EPIPE in uncaught exception");
+    }
+    return;
+  }
   console.error("[production] Uncaught exception:", err);
   shutdown(1);
 });
 
-// If either process dies, shut down both
+// If either child dies unexpectedly -> exit code 42 (crash signal for supervisor)
 backend.exited.then((code) => {
   if (!shuttingDown) {
-    console.error(`[production] Backend exited with code ${code}`);
-    shutdown(code || 1);
+    console.error(`[production] Backend exited with code ${code} (treating as crash)`);
+    shutdown(42);
   }
 });
 
 dashboard.exited.then((code) => {
   if (!shuttingDown) {
-    console.error(`[production] Dashboard exited with code ${code}`);
-    shutdown(code || 1);
+    console.error(`[production] Dashboard exited with code ${code} (treating as crash)`);
+    shutdown(42);
   }
 });
 
